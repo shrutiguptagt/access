@@ -1,0 +1,176 @@
+Applications Single Sign-On
+
+EPIC: Link to the backlog issue
+
+Maintainer: Decided on the leads meeting
+
+
+Background
+
+Design Goals
+
+Other Proposals
+
+OAuth alternative
+
+Solution Summary
+
+Solution Details
+
+Authentication & Authorization with OAuth
+
+Access Control
+
+Google
+
+GitHub
+
+Others (future functionality)
+
+Session Tokens
+
+Workflow
+
+Code
+
+Open Questions
+
+Tradeoffs made
+
+Background
+The 2018Q4 OKRs contain the following:
+
+
+Get web interfaces enterprise ready [APPS]
+
+gitbase-web SSO (protocol compatible with Google)
+bblfsh-web SSO (protocol compatible with Google)
+Design Goals
+- Be compatible with Google Sign-in
+
+- Optionally be compatible with GitHub (if it can be done with one of the protocols supported by Google)
+
+- Minimize duplicated code between bblfsh-web and gitbase-web for this to happen
+
+- It needs to be optional, if you don't set up SSO, you get current behavior (no auth)
+
+- We didn't talk about adding any kind of fine-grained permissions yet, so just login page and you get fully in or not
+
+- We don't need to save anything on our side, since we have no persistence or account concept at the moment
+
+Other Proposals
+Options that were looked at, but we evaluated that weren’t going to work
+
+OAuth alternative
+OpenID Connect. OAuth is for authentication + authorization, but for us it would be enough if we had authentication with basic profile info, like Google G Suite membership. Google supports OpenID Connect, which could be a good fit. But it looks like this is not an option for GitHub accounts.
+
+Besides being potentially simpler, it does not provide any clear advantage over OAuth, and it was decided that going for the more generic approach of OAuth was preferable.
+
+Solution Summary
+Users visit a welcome page where they are offered to log in using their Google or GitHub account.
+
+
+The administrator has a clear way to configure who is allowed to access. Admins can also disable each authentication method or disable access control completely.
+
+Solution Details
+Authentication & Authorization with OAuth
+References:
+
+https://github.com/golang/oauth2
+https://developers.google.com/identity/protocols/OAuth2
+https://developer.github.com/apps/building-oauth-apps/authorizing-oauth-apps/
+
+There are different grant types. But GitHub only supports the authorization code grant type, so the choice is already made. We need to make sure we follow that, in case we start development with the google services.
+
+
+For reference, we already did oauth for GitHub accounts in code-annotation:
+
+https://github.com/src-d/code-annotation#github-oauth-tokens
+https://github.com/src-d/code-annotation/blob/master/server/service/oauth.go
+Access Control
+Besides being a valid Google/GitHub account the backend needs to perform some validation to allow or deny access.
+
+Google
+We check whether the user is a member of a G Suite organization.
+
+
+We can use the documented flow for web servers to exchange the authorization code for an access token, and the use that access token to call the profile API endpoints to check the logged-in user email domain.
+
+
+
+For now we discard more fine-grained options. For instance, in the future we could restrict access to users with a certain role, or a group.
+
+https://support.google.com/a/answer/33325?hl=en
+https://developers.google.com/admin-sdk/directory/v1/guides/manage-groups#get_all_member_groups
+GitHub
+We can do user access based on membership to:
+
+Organizations, API link
+Teams, API link
+Others (future functionality)
+In the future we may want to add the option to control access with the membership to an LDAP group or equivalent. This might be done authenticating with Google, and then using the email to check LDAP entries.
+
+Session Tokens
+The server will create JWT access tokens with:
+
+basic user ID, like google email, or github username. We can use it for audit logs, and maybe as a base for future functionality.
+expiration date, already part of the standard in JWT.
+
+In the frontend the token is stored in window.localStorage. Tokens stored in localStorage are kept between sessions, i.e. you can close and reopen the page and you will still be logged-in.
+
+
+
+There will be no persistence in the backend. We will rely on the JWT signature and the expiration date to grant or deny access to tokens issued before.
+
+
+Since tokens do not rely on any centralized DB, we can make them valid for different installations if the servers share the same signing key. For example, two gitbase-web and bblfs-web containers.
+
+But the browser localStorage is not shared between domains or subdomains. Possible solutions for this deployment scenario include:
+
+Store JWT tokens in cookies
+Use a cross domain local storage lib, like https://github.com/zendesk/cross-storage
+
+Other details
+
+We need a log-out button. This can be implemented simply removing the JWT from localStorage.
+Workflow
+editor link
+
+
+
+Code
+In order to keep the solution as simple as possible, and generic enough to be integrated into gitbase-web and bblfsh-web, there will be a new common Go library that will provide:
+
+
+A /login page. To avoid complexity in the frontend this page will be served as an html endpoint. The html will be made from a Go html template file that should work out of the box, but administrators will be able to edit, for example for branding.
+An http middleware that will check if the request includes a valid JWT token. If not, the response will redirect to /login. This should be a standard Go middleware ( func(http.Handler) http.Handler ), since gitbase-web and bblfsh-web don’t use the same backend frameworks.
+Configuration mechanism. The administrator should be able to set:
+No access control
+Which providers are enabled. Google/GitHub/other future ones.
+The config for each provider. App ID, secrets, etc.
+
+
+Since the login page will be served by the backend, the react apps will not include any components to deal with the rendering of this new page. If we can avoid it we will not create a JS library on npm. Instead we’ll try to keep the JS part lightweight and include it in the docs of the new Go library.
+
+
+The frontend will need:
+
+Code to manage the stored tokens
+A wrapper for fetch() or some helper function that will detect a redirect to /login as an API response, and perform the actual browser redirect
+
+
+We will develop everything for one project only in its current repository, and then the new library will be extracted to a new repository and applied to both gitbase-web and bblfsh-web.
+
+The initial development will be done against a new feature branch, and only after the library is extracted we will PR against master.
+
+Open Questions
+How will we test it with a real google G Suite?
+
+
+Tradeoffs made
+Skipping the persistence of sessions in the backend allows us to have flexibility, easy authentication to different application installations, and simplifies the solution.
+
+But it limits future functionality. For example, if we needed to revoke access to a specific user, or some other advanced administrator management.
+
+
+Still, the current proposal incorporates the user ID as part of the token, so new functionality can rely on it in the future.
